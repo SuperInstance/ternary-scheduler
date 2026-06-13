@@ -1,9 +1,6 @@
 [package]
-description = "ternary-scheduler - SuperInstance ecosystem crate"
-repository = "https://github.com/SuperInstance/ternary-scheduler"
 name = "ternary-scheduler"
 version = "0.1.0"
-license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
