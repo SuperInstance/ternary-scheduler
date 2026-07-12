@@ -326,4 +326,163 @@ mod tests {
         assert_eq!(pool.workers[0].len(), 3);
         assert_eq!(pool.workers[1].len(), 0);
     }
+
+    // --- schedule() branches ---
+
+    #[test]
+    fn test_schedule_empty() {
+        let s = Scheduler::new();
+        assert!(s.schedule().is_empty());
+    }
+
+    // Same-priority tasks without deadlines keep a stable relative order
+    // and all sort after higher-priority tasks (deadline defaults to MAX).
+    #[test]
+    fn test_schedule_priority_desc_then_deadline_asc() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0).with_deadline(10));
+        s.add_task(Task::new(2, 1));
+        s.add_task(Task::new(3, 0).with_deadline(5));
+        s.add_task(Task::new(4, -1));
+        let order: Vec<usize> = s.schedule().iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![2, 3, 1, 4]);
+    }
+
+    // --- reschedule() branches ---
+
+    // Tasks without a deadline are never escalated.
+    #[test]
+    fn test_reschedule_no_deadline_not_escalated() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0).with_duration(3));
+        assert_eq!(s.reschedule(0), 0);
+        assert_eq!(s.tasks[&1].priority, 0);
+    }
+
+    // Only priority==0 tasks escalate; deferred and already-urgent tasks
+    // do not, even when their deadline is imminent.
+    #[test]
+    fn test_reschedule_skips_non_normal_priority() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, -1).with_deadline(10).with_duration(3));
+        s.add_task(Task::new(2, 1).with_deadline(10).with_duration(3));
+        assert_eq!(s.reschedule(9), 0);
+        assert_eq!(s.tasks[&1].priority, -1);
+        assert_eq!(s.tasks[&2].priority, 1);
+    }
+
+    // priority==0 with plenty of lead time is left alone.
+    #[test]
+    fn test_reschedule_no_escalation_when_far_from_deadline() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0).with_deadline(100).with_duration(3));
+        // remaining = 95, duration*2 = 6 -> no escalation
+        assert_eq!(s.reschedule(5), 0);
+        assert_eq!(s.tasks[&1].priority, 0);
+    }
+
+    // Escalation is idempotent: after 0 -> +1, a second pass does nothing.
+    #[test]
+    fn test_reschedule_idempotent() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0).with_deadline(10).with_duration(3));
+        assert_eq!(s.reschedule(5), 1);
+        assert_eq!(s.reschedule(5), 0);
+        assert_eq!(s.tasks[&1].priority, 1);
+    }
+
+    // A task already past its deadline (remaining saturates to 0) still
+    // escalates, since 0 <= duration*2.
+    #[test]
+    fn test_reschedule_escalates_past_deadline() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0).with_deadline(5).with_duration(2));
+        assert_eq!(s.reschedule(100), 1);
+        assert_eq!(s.tasks[&1].priority, 1);
+    }
+
+    // --- defer() error path ---
+
+    #[test]
+    fn test_defer_missing_task_returns_false() {
+        let mut s = Scheduler::new();
+        s.add_task(Task::new(1, 0));
+        assert!(!s.defer(999, 10));
+        assert_eq!(s.tasks[&1].priority, 0);
+    }
+
+    // --- utilization() edge cases ---
+
+    #[test]
+    fn test_utilization_empty_is_zero() {
+        assert_eq!(Scheduler::utilization(&[]), 0.0);
+    }
+
+    #[test]
+    fn test_utilization_all_idle_is_zero() {
+        let history: Vec<Option<usize>> = vec![None, None, None];
+        assert_eq!(Scheduler::utilization(&history), 0.0);
+    }
+
+    #[test]
+    fn test_utilization_all_busy_is_one() {
+        let history: Vec<Option<usize>> = vec![Some(1), Some(2), Some(3)];
+        assert!((Scheduler::utilization(&history) - 1.0).abs() < 1e-10);
+    }
+
+    // --- WorkStealingPool branches ---
+
+    #[test]
+    fn test_steal_single_worker_is_noop() {
+        let mut pool = WorkStealingPool::new(1);
+        pool.assign(0, Task::new(1, 0));
+        pool.assign(0, Task::new(2, 0));
+        assert_eq!(pool.steal(), 0);
+        assert_eq!(pool.workers[0].len(), 2);
+    }
+
+    #[test]
+    fn test_steal_balanced_pool_moves_nothing() {
+        let mut pool = WorkStealingPool::new(2);
+        pool.assign(0, Task::new(1, 0));
+        pool.assign(0, Task::new(2, 0));
+        pool.assign(1, Task::new(3, 0));
+        pool.assign(1, Task::new(4, 0));
+        // loads [2, 2]: busiest_load (2) is not > idlest_load (2) + 1.
+        assert_eq!(pool.steal(), 0);
+    }
+
+    // assign() to a non-existent worker index is a no-op (task dropped),
+    // never a panic / index-out-of-bounds.
+    #[test]
+    fn test_assign_out_of_bounds_is_noop() {
+        let mut pool = WorkStealingPool::new(2);
+        pool.assign(5, Task::new(1, 0));
+        assert!(pool.workers.iter().all(|w| w.is_empty()));
+    }
+
+    // --- LoadBalancer::is_balanced branches ---
+
+    #[test]
+    fn test_is_balanced_empty_is_true() {
+        assert!(LoadBalancer::is_balanced(&[]));
+    }
+
+    #[test]
+    fn test_is_balanced_detects_imbalance() {
+        let workers = vec![
+            vec![Task::new(1, 0), Task::new(2, 0), Task::new(3, 0)],
+            vec![],
+        ];
+        assert!(!LoadBalancer::is_balanced(&workers));
+    }
+
+    // --- Default impl ---
+
+    #[test]
+    fn test_scheduler_default() {
+        let s = Scheduler::default();
+        assert!(s.tasks.is_empty());
+        assert!(s.schedule().is_empty());
+    }
 }
