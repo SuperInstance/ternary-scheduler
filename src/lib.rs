@@ -176,11 +176,25 @@ impl LoadBalancer {
         workers.iter().all(|w| (w.len() as f64 - avg).abs() <= 1.0)
     }
 
-    /// Redistribute tasks to balance load
+    /// Redistribute tasks to balance load.
+    ///
+    /// Repeatedly steals until `is_balanced` holds or no further steal is
+    /// possible (for example when the only excess tasks on the busiest
+    /// worker are urgent and therefore non-stealable).
+    ///
+    /// This terminates: each successful steal moves one task from the
+    /// busiest worker to the idlest, strictly decreasing the sum of squared
+    /// loads (a non-negative integer potential), so progress is impossible
+    /// to sustain indefinitely. The `stolen == 0` guard also breaks the
+    /// loop if `steal` ever cannot make a move.
     pub fn balance(pool: &mut WorkStealingPool) -> usize {
         let mut moves = 0;
-        for _ in 0..pool.workers.len() {
-            moves += pool.steal();
+        while !Self::is_balanced(&pool.workers) {
+            let stolen = pool.steal();
+            if stolen == 0 {
+                break;
+            }
+            moves += stolen;
         }
         moves
     }
@@ -263,5 +277,44 @@ mod tests {
             workers: vec![vec![Task::new(1, 0)], vec![Task::new(2, 0)]],
         };
         assert!(LoadBalancer::is_balanced(&pool.workers));
+    }
+
+    // Regression: balance() previously ran only W steal rounds, which for a
+    // heavily overloaded single worker left the pool unbalanced (e.g. a
+    // [10, 0, 0] start converged to [7, 2, 1] and stopped). balance() must
+    // keep stealing until is_balanced() holds.
+    #[test]
+    fn test_balance_actually_balances() {
+        let mut pool = WorkStealingPool::new(3);
+        for i in 0..10 {
+            pool.assign(0, Task::new(i, 0));
+        }
+        let moves = LoadBalancer::balance(&mut pool);
+        assert!(moves > 0, "balance should have moved tasks");
+        assert!(
+            LoadBalancer::is_balanced(&pool.workers),
+            "pool not balanced after balance(): {:?}",
+            pool.workers.iter().map(|w| w.len()).collect::<Vec<_>>()
+        );
+        // No tasks were lost.
+        let total: usize = pool.workers.iter().map(|w| w.len()).sum();
+        assert_eq!(total, 10);
+    }
+
+    // balance() must terminate and report zero moves when the imbalance is
+    // caused entirely by non-stealable urgent tasks on the busiest worker.
+    #[test]
+    fn test_balance_skips_urgent_only_imbalance() {
+        let mut pool = WorkStealingPool::new(2);
+        // Three urgent (+1) tasks on worker 0, none on worker 1. Urgent
+        // tasks must never be stolen, so the pool stays imbalanced but
+        // balance() must not loop forever or move anything.
+        for i in 0..3 {
+            pool.assign(0, Task::new(i, 1));
+        }
+        let moves = LoadBalancer::balance(&mut pool);
+        assert_eq!(moves, 0);
+        assert_eq!(pool.workers[0].len(), 3);
+        assert_eq!(pool.workers[1].len(), 0);
     }
 }
