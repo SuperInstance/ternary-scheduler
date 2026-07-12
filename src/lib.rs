@@ -262,13 +262,22 @@ mod tests {
 
     #[test]
     fn test_no_steal_urgent() {
+        // The load imbalance must be large enough that steal() actually
+        // attempts a steal (busiest_load > idlest_load + 1). With a
+        // [2, 1] split the guard `2 > 1 + 1` is false and the test would
+        // pass for the wrong reason. Here worker 0 holds three urgent
+        // tasks and worker 1 holds none, so the only thing preventing a
+        // steal is the urgent-task protection.
         let mut pool = WorkStealingPool::new(2);
         pool.assign(0, Task::new(1, 1)); // urgent
         pool.assign(0, Task::new(2, 1)); // urgent
-        pool.assign(1, Task::new(3, 0));
+        pool.assign(0, Task::new(3, 1)); // urgent
         let stolen = pool.steal();
-        // Should not steal +1 tasks
+        // Urgent (+1) tasks must never be stolen even when heavily
+        // imbalanced.
         assert_eq!(stolen, 0);
+        assert_eq!(pool.workers[0].len(), 3);
+        assert_eq!(pool.workers[1].len(), 0);
     }
 
     #[test]
