@@ -13,11 +13,26 @@ pub struct Task {
 
 impl Task {
     pub fn new(id: usize, priority: i8) -> Self {
-        Self { id, priority, deadline: None, duration: 1, dependencies: Vec::new() }
+        Self {
+            id,
+            priority,
+            deadline: None,
+            duration: 1,
+            dependencies: Vec::new(),
+        }
     }
-    pub fn with_deadline(mut self, d: usize) -> Self { self.deadline = Some(d); self }
-    pub fn with_duration(mut self, d: usize) -> Self { self.duration = d; self }
-    pub fn depends_on(mut self, ids: &[usize]) -> Self { self.dependencies = ids.to_vec(); self }
+    pub fn with_deadline(mut self, d: usize) -> Self {
+        self.deadline = Some(d);
+        self
+    }
+    pub fn with_duration(mut self, d: usize) -> Self {
+        self.duration = d;
+        self
+    }
+    pub fn depends_on(mut self, ids: &[usize]) -> Self {
+        self.dependencies = ids.to_vec();
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -26,8 +41,19 @@ pub struct Scheduler {
     next_id: usize,
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
-    pub fn new() -> Self { Self { tasks: HashMap::new(), next_id: 0 } }
+    pub fn new() -> Self {
+        Self {
+            tasks: HashMap::new(),
+            next_id: 0,
+        }
+    }
 
     pub fn add_task(&mut self, task: Task) {
         self.next_id = self.next_id.max(task.id + 1);
@@ -38,7 +64,8 @@ impl Scheduler {
     pub fn schedule(&self) -> Vec<&Task> {
         let mut tasks: Vec<&Task> = self.tasks.values().collect();
         tasks.sort_by(|a, b| {
-            b.priority.cmp(&a.priority) // higher priority first
+            b.priority
+                .cmp(&a.priority) // higher priority first
                 .then_with(|| {
                     let da = a.deadline.unwrap_or(usize::MAX);
                     let db = b.deadline.unwrap_or(usize::MAX);
@@ -68,12 +95,16 @@ impl Scheduler {
         if let Some(task) = self.tasks.get_mut(&id) {
             task.priority = -1;
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     /// Utilization: fraction of ticks that were productive
     pub fn utilization(history: &[Option<usize>]) -> f64 {
-        if history.is_empty() { return 0.0; }
+        if history.is_empty() {
+            return 0.0;
+        }
         history.iter().filter(|h| h.is_some()).count() as f64 / history.len() as f64
     }
 }
@@ -85,24 +116,36 @@ pub struct WorkStealingPool {
 
 impl WorkStealingPool {
     pub fn new(n_workers: usize) -> Self {
-        Self { workers: (0..n_workers).map(|_| Vec::new()).collect() }
+        Self {
+            workers: (0..n_workers).map(|_| Vec::new()).collect(),
+        }
     }
 
     pub fn assign(&mut self, worker: usize, task: Task) {
-        if worker < self.workers.len() { self.workers[worker].push(task); }
+        if worker < self.workers.len() {
+            self.workers[worker].push(task);
+        }
     }
 
     pub fn steal(&mut self) -> usize {
         let mut stolen = 0;
         let n = self.workers.len();
-        if n < 2 { return 0; }
+        if n < 2 {
+            return 0;
+        }
 
         // Find busiest and idlest
-        let (busiest, busiest_load) = self.workers.iter().enumerate()
+        let (busiest, busiest_load) = self
+            .workers
+            .iter()
+            .enumerate()
             .map(|(i, w)| (i, w.len()))
             .max_by_key(|&(_, l)| l)
             .unwrap_or((0, 0));
-        let (idlest, idlest_load) = self.workers.iter().enumerate()
+        let (idlest, idlest_load) = self
+            .workers
+            .iter()
+            .enumerate()
             .map(|(i, w)| (i, w.len()))
             .min_by_key(|&(_, l)| l)
             .unwrap_or((0, 0));
@@ -125,7 +168,9 @@ pub struct LoadBalancer;
 impl LoadBalancer {
     /// Check if all workers are within ±1 of average
     pub fn is_balanced(workers: &[Vec<Task>]) -> bool {
-        if workers.is_empty() { return true; }
+        if workers.is_empty() {
+            return true;
+        }
         let total: usize = workers.iter().map(|w| w.len()).sum();
         let avg = total as f64 / workers.len() as f64;
         workers.iter().all(|w| (w.len() as f64 - avg).abs() <= 1.0)
