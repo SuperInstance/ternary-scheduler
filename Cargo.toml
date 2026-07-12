@@ -3,5 +3,10 @@ name = "ternary-scheduler"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Ternary task scheduler with three-level priority classification {urgent, normal, deferred}, deadline-aware escalation, and work-stealing load balancing."
+repository = "https://github.com/SuperInstance/ternary-scheduler"
+readme = "README.md"
+keywords = ["scheduler", "scheduling", "priority", "work-stealing", "load-balancing"]
+categories = ["algorithms", "data-structures"]
 
 [dependencies]
