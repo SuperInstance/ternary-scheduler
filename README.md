@@ -1,6 +1,14 @@
 # ternary-scheduler
 
-Ternary task scheduler with **three-level priority classification** `{+1=urgent, 0=normal, -1=deferred}`, deadline-aware rescheduling, work-stealing parallelism, and load balancing across workers.
+Ternary task scheduler with **three-level priority classification** `{+1=urgent, 0=normal, -1=deferred}`, deadline-aware rescheduling, work-stealing load balancing, and a deterministic worker model.
+
+> **Status / scope.** This crate implements the scheduling *logic* — data
+> structures and algorithms for ordering, escalating, and rebalancing
+> tasks. `WorkStealingPool` models the work-stealing algorithm
+> deterministically over `Vec<Vec<Task>>` for planning, analysis, and
+> testing; it does **not** spawn threads or executors, so there is no
+> real parallel execution. Treat it as a single-threaded simulation of a
+> multi-worker scheduler.
 
 ## Why It Matters
 
@@ -64,7 +72,7 @@ balanced ⟺ ∀ w: |load(w) - avg| ≤ 1
 
 If unbalanced, it calls `steal()` repeatedly until balanced or no more stealable tasks remain.
 
-**Complexity:** O(W²) worst case for full balancing (W steal rounds × W scan each).
+**Complexity:** Each `steal()` is O(W) to scan workers for busiest/idlest (plus up to O(L) to find a stealable candidate in the busiest worker, where L is its queue length). `balance()` performs at most O(N) steals to converge — each moves one task and strictly decreases the sum of squared loads — so a full balance is O(N · (W + N)) worst case.
 
 ### Utilization Metric
 
@@ -94,6 +102,10 @@ pool.assign(0, Task::new(2, 0));
 pool.assign(0, Task::new(3, 0));
 let stolen = pool.steal();
 assert!(stolen > 0);
+
+// Rebalance until every worker is within ±1 of the average
+LoadBalancer::balance(&mut pool);
+assert!(LoadBalancer::is_balanced(&pool.workers));
 ```
 
 ## API
@@ -106,8 +118,14 @@ assert!(stolen > 0);
 | `add_task(task)` | `()` | Register a task |
 | `schedule()` | `Vec<&Task>` | Get sorted execution order |
 | `reschedule(current_tick)` | `usize` | Escalate approaching deadlines |
-| `defer(id, ticks)` | `bool` | Set task to deferred |
+| `defer(id, ticks)` | `bool` | Set task to deferred *(stub: `ticks` is currently ignored — see note below)* |
 | `utilization(history)` | `f64` | Static: compute utilization |
+
+> **Stub notice — `defer`.** `defer(id, _ticks)` currently ignores the
+> `ticks` argument and unconditionally lowers the task's priority to
+> `-1` (deferred). The parameter is reserved for a future
+> "defer-for-N-ticks" semantics; for now the deferral is permanent
+> until something else changes the priority.
 
 ### `Task` Builder
 
